@@ -16,9 +16,9 @@ IP = '10.61.22.3' # local IP, change this
 TCP_PORT = 8090
 BUFFER_SIZE = 1
 
-STEPS_PER_MM = 80.02
-COLUMNS = 10
-ROWS = 10
+STEPS_PER_MM = 81.05
+COLUMNS = 100
+ROWS = 100
 
 PAGE_MARGIN = 5
 M5_SIZE = 54
@@ -27,8 +27,8 @@ page_height = A4[1] / mm
 MOVE_AREA_WIDTH = page_width - 2*PAGE_MARGIN - M5_SIZE
 MOVE_AREA_HEIGHT = page_height - 2*PAGE_MARGIN - M5_SIZE
 
-STEPS_X = round(MOVE_AREA_WIDTH / COLUMNS * STEPS_PER_MM * -1)
-STEPS_Y = round(MOVE_AREA_HEIGHT / ROWS * STEPS_PER_MM)
+STEPS_X = round(MOVE_AREA_WIDTH / (COLUMNS-1) * STEPS_PER_MM * -1)
+STEPS_Y = round(MOVE_AREA_HEIGHT / (ROWS-1) * STEPS_PER_MM)
 
 imgsize = [36, 36]
 img_byte_len = imgsize[0] * imgsize[1]
@@ -83,8 +83,8 @@ def get_image(conn):
 
 def pos_in_grid(col, row):
     pos = (
-        round(PAGE_MARGIN + M5_SIZE/2 + (col) * STEPS_X / STEPS_PER_MM * (-1)),
-        round(PAGE_MARGIN + M5_SIZE/2 + (row) * STEPS_Y / STEPS_PER_MM)
+        round(PAGE_MARGIN + M5_SIZE/2 + (col) * STEPS_X / STEPS_PER_MM * (-1), 2),
+        round(PAGE_MARGIN + M5_SIZE/2 + (row) * STEPS_Y / STEPS_PER_MM, 2)
     )
     return pos
 
@@ -95,23 +95,18 @@ def save_img(pos, conn):
     if not os.path.exists(target_dir):
         os.mkdir(target_dir)
 
-    print("before image loop")
     while True:
         if not connected:
             time.sleep(1)
             print("not connected")
         
-        
         message = "failed\n"
         conn.send(message.encode()) # looks strange again. just believe dev #2 as well
         img = None
         img = get_image(conn)
-        message = "failed\n"
         conn.send(message.encode()) # looks strange but just believe me
 
-        print("looping")
         if img.any():
-            print("got data")
             break
 
     image = Image.fromarray(get_image(conn))
@@ -124,23 +119,21 @@ def move_over_page(port, cols, rows, duration, conn):
     duration_y = round(duration * 1.4142)
 
     for r in range(rows):
-        time.sleep(0.2) # pause for image capture to prevent shakey captures
+        time.sleep(0.1) # pause for image capture to prevent shakey captures
         for c in range(cols):
-            print("loop entered")
+            time.sleep(0.1) # pause for image capture to prevent shakey captures
             save_img(pos_in_grid(r, c), conn)
-            print("image taken")
-            ebb_motion.doABMove(port, 0, STEPS_X, duration_x)
-            print("move sent")
-            time.sleep(duration_x/1000)
-            print("move sleep")
-            time.sleep(0.2) # pause for image capture to prevent shakey captures
-        ebb_motion.doABMove(port, 0, -1*STEPS_X*cols, return_duration_x)
+            if c != cols-1:
+                ebb_motion.doABMove(port, 0, STEPS_X, duration_x)
+                time.sleep(duration_x/1000)
+        # move back to the first column
+        ebb_motion.doABMove(port, 0, -1*STEPS_X*(cols-1), return_duration_x)
         time.sleep(return_duration_x/1000)
+        if r != rows-1:
+            ebb_motion.doABMove(port, STEPS_Y, 0, duration_y)
+            time.sleep(duration_y/1000)
 
-        ebb_motion.doABMove(port, STEPS_Y, 0, duration_y)
-        time.sleep(duration_y/1000)
-
-    ebb_motion.doABMove(port, -1*STEPS_Y*rows, 0, return_duration_y)
+    ebb_motion.doABMove(port, -1*STEPS_Y*(rows-1), 0, return_duration_y)
     time.sleep(return_duration_y/1000)
 
 if __name__ == "__main__":
