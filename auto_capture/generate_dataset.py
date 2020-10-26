@@ -16,41 +16,55 @@ IP = '10.61.22.3' # local IP, change this
 TCP_PORT = 8090
 BUFFER_SIZE = 1
 
-STEPS_PER_MM = 81.05
+M5_SIZE = 54
+
+# AxiDraw settings
+STEPS_PER_MM = 81.05    # AxiDraw documentation states 80 steps, however 
 COLUMNS = 100
 ROWS = 100
 
+# page settings
+PAGE_WIDTH = A4[0] / mm
+PAGE_HEIGHT = A4[1] / mm
 PAGE_MARGIN = 5
-M5_SIZE = 54
-page_width = A4[0] / mm
-page_height = A4[1] / mm
-MOVE_AREA_WIDTH = page_width - 2*PAGE_MARGIN - M5_SIZE
-MOVE_AREA_HEIGHT = page_height - 2*PAGE_MARGIN - M5_SIZE
+# the movement boundaries for the M5Stack
+MOVE_AREA_WIDTH = PAGE_WIDTH - 2*PAGE_MARGIN - M5_SIZE
+MOVE_AREA_HEIGHT = PAGE_HEIGHT - 2*PAGE_MARGIN - M5_SIZE
 
+# the amount of steps to move between columns/rows
 STEPS_X = round(MOVE_AREA_WIDTH / (COLUMNS-1) * STEPS_PER_MM * -1)
 STEPS_Y = round(MOVE_AREA_HEIGHT / (ROWS-1) * STEPS_PER_MM)
 
 imgsize = [36, 36]
 img_byte_len = imgsize[0] * imgsize[1]
-connected = False
+conn = None
+sock_image = None
 
 
 # TODO: replace local M5Stack functions with imports from ./livetracker/raw_grabber.py
 def connect():
+    global conn, sock_image
     sock_image = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock_image.bind((IP, TCP_PORT))
     sock_image.listen(1)
     conn, addr = sock_image.accept()
-
-    connected = True
     print("connected")
-    return sock_image, conn
 
-def get_image(conn):
+def get_image():
+    global conn, sock_image
     buf = b''
 
     while True:
-        received = conn.recv(BUFFER_SIZE)
+        try:
+            received = conn.recv(BUFFER_SIZE)
+        except ConnectionResetError:
+            print("connection reset by peer. trying to reconnect...")
+            sock_image.close()
+            connect()
+            return None
+        except:
+            print("unkown error trying to receive image")
+
         if received == b'':
             print("connection broken")
             return None
@@ -88,44 +102,52 @@ def pos_in_grid(col, row):
     )
     return pos
 
-def save_img(pos, conn):
-    filename = str(pos[0]) + "_" + str(pos[1]) + ".png"
+def save_img(pos):
+    global conn
+
     # save dataset in /DotTrack/img_dataset/
+    filename = str(pos[0]) + "_" + str(pos[1]) + ".png"
     target_dir = os.path.dirname(os.path.dirname(__file__)) + "img_dataset/"
     if not os.path.exists(target_dir):
         os.mkdir(target_dir)
 
     while True:
-        if not connected:
-            time.sleep(1)
-            print("not connected")
-        
         message = "failed\n"
         conn.send(message.encode()) # looks strange again. just believe dev #2 as well
         img = None
-        img = get_image(conn)
+        img = get_image()
         conn.send(message.encode()) # looks strange but just believe me
 
-        if img.any():
+        if img.any():   # continue on image received
             break
 
-    image = Image.fromarray(get_image(conn))
+    # save image to file
+    image = Image.fromarray(get_image())
     image.save(target_dir + filename)
 
-def move_over_page(port, cols, rows, duration, conn):
-    return_duration_x = 1000
-    return_duration_y = round(1000 * 1.4142)
+def move_over_page(port, cols, rows, duration):
+    # abrupt stops can cause the AxiDraw to missallign.
+    # 2s recommended to move from one short end of the paper to the other
+    # multiply duration with the golden ratio (1.4142) to achieve the same AxiDraw speed
+    return_duration_x = 2000
+    return_duration_y = round(2000 * 1.4142)
     duration_x = duration
     duration_y = round(duration * 1.4142)
 
+    # move over the defined grid size of the page
+    # code has to sleep for the same duration the AxiDraw was instructed to move at least.
+    # added short sleeps to prevent AxiDraw missalligning due to abrupt movements
+    # added short sleep before image capture to prevent shaky images
     for r in range(rows):
-        time.sleep(0.1) # pause for image capture to prevent shakey captures
+        time.sleep(0.1) # pause before starting a row
         for c in range(cols):
-            time.sleep(0.1) # pause for image capture to prevent shakey captures
-            save_img(pos_in_grid(r, c), conn)
+            time.sleep(0.1) # pause before image capture
+            save_img(pos_in_grid(r, c))
+            # c0->c99 requires only 98 movements
             if c != cols-1:
                 ebb_motion.doABMove(port, 0, STEPS_X, duration_x)
                 time.sleep(duration_x/1000)
+
         # move back to the first column
         ebb_motion.doABMove(port, 0, -1*STEPS_X*(cols-1), return_duration_x)
         time.sleep(return_duration_x/1000)
@@ -133,18 +155,19 @@ def move_over_page(port, cols, rows, duration, conn):
             ebb_motion.doABMove(port, STEPS_Y, 0, duration_y)
             time.sleep(duration_y/1000)
 
+    # move back to home position (0, 0)
     ebb_motion.doABMove(port, -1*STEPS_Y*(rows-1), 0, return_duration_y)
     time.sleep(return_duration_y/1000)
 
 if __name__ == "__main__":
     duration = 200
 
-    sock_image, conn = connect()
+    connect()
     port = ebb_serial.openPort()
     ebb_motion.sendDisableMotors(port)
 
-    move_over_page(port, COLUMNS, ROWS, duration, conn)
-    ebb_motion.sendDisableMotors(port)
+    move_over_page(port, COLUMNS, ROWS, duration)
 
+    ebb_motion.sendDisableMotors(port)
     sock_image.close()
     
