@@ -95,7 +95,7 @@ def get_image():
     return np.array(img)
 
 
-def pos_in_grid(col, row):
+def pos_in_grid(row, col):
     pos = (
         round(PAGE_MARGIN + M5_SIZE/2 + (col) * STEPS_X / STEPS_PER_MM * (-1), 2),
         round(PAGE_MARGIN + M5_SIZE/2 + (row) * STEPS_Y / STEPS_PER_MM, 2)
